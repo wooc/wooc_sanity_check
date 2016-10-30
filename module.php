@@ -2,7 +2,7 @@
 // Classes and libraries for module system
 //
 // webtrees: Web based Family History software
-// Copyright (C) 2015 £ukasz WileÒski.
+// Copyright (C) 2016 ≈Åukasz Wile≈Ñski.
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -133,6 +133,9 @@ class WoocSanityCheckModule extends AbstractModule implements ModuleConfigInterf
 					</label><br>
 					<label class="checkbox-inline col-sm-offset-1">
 						<?php echo FunctionsEdit::twoStateCheckbox('died', Filter::post('died')) . ' ' . I18N::translate('Birth after death or burial'); ?>
+					</label><br>
+					<label class="checkbox-inline col-sm-offset-1">
+						<?php echo FunctionsEdit::twoStateCheckbox('buri', Filter::post('buri')) . ' ' . I18N::translate('Burial before death'); ?>
 					</label>
 				</div>
 				<div class="row">
@@ -155,6 +158,9 @@ class WoocSanityCheckModule extends AbstractModule implements ModuleConfigInterf
 					</label><br>
 					<label class="checkbox-inline col-sm-offset-1">
 						<?php echo FunctionsEdit::twoStateCheckbox('dupe_sex', Filter::post('dupe_sex')) . ' ' . I18N::translate('Gender'); ?>
+					</label><br>
+					<label class="checkbox-inline col-sm-offset-1">
+						<?php echo FunctionsEdit::twoStateCheckbox('dupe_name', Filter::post('dupe_name')) . ' ' . I18N::translate('Name'); ?>
 					</label>
 				</div>
 			</div>
@@ -216,6 +222,25 @@ class WoocSanityCheckModule extends AbstractModule implements ModuleConfigInterf
 					<div class="panel-heading">
 						<h4 class="panel-title">
 							<a href="#collapseTwo" data-target="#collapseTwo" data-toggle="collapse"><?php echo I18N::translate('%s born after death or burial', I18N::number($data['count'])); ?></a>
+						</h4>
+					</div>
+					<div class="panel-collapse collapse in" id="collapseTwo">
+						<div class="panel-body">
+							<?php echo $data['html']; ?>
+						</div>
+					</div>
+				</div>
+			</div>
+			<?php
+		}
+		if (Filter::post('buri')) {
+			$data = $this->deathComparisons(array('BURI'));
+			?>
+			<div id="accordion-died" class="panel-group">
+				<div id="panel-died" class="panel panel-default">
+					<div class="panel-heading">
+						<h4 class="panel-title">
+							<a href="#collapseTwo" data-target="#collapseTwo" data-toggle="collapse"><?php echo I18N::translate('%s buried before death', I18N::number($data['count'])); ?></a>
 						</h4>
 					</div>
 					<div class="panel-collapse collapse in" id="collapseTwo">
@@ -303,6 +328,25 @@ class WoocSanityCheckModule extends AbstractModule implements ModuleConfigInterf
 			</div>
 			<?php
 		}
+		if (Filter::post('dupe_name')) {
+			$data = $this->identicalName('NAME');
+			?>
+			<div id="accordion-dupe_sex" class="panel-group">
+				<div id="panel-dupe_sex" class="panel panel-default">
+					<div class="panel-heading">
+						<h4 class="panel-title">
+							<a href="#collapseSix" data-target="#collapseSix" data-toggle="collapse"><?php echo I18N::translate('%s with identical name records', I18N::number($data['count'])); ?></a>
+						</h4>
+					</div>
+					<div class="panel-collapse collapse in" id="collapseSix">
+						<div class="panel-body">
+							<?php echo $data['html']; ?>
+						</div>
+					</div>
+				</div>
+			</div>
+			<?php
+		}
 	}
 	private function unlinkedRecords($tag) {
 		global $WT_TREE;
@@ -350,6 +394,37 @@ class WoocSanityCheckModule extends AbstractModule implements ModuleConfigInterf
 		return array('html' => $html, 'count' => $count);
 	}
 
+	private function deathComparisons($tag_array) {
+		global $WT_TREE;
+		$html = '';
+		$count = 0;
+		$tag_count = count($tag_array);
+		for ($i = 0; $i < $tag_count; $i ++) {
+			$rows = Database::prepare(
+				"SELECT i_id AS xref, i_gedcom AS gedrec FROM `##individuals` WHERE `i_file` = ? AND `i_gedcom` LIKE CONCAT('%1 ', ?, '%') AND `i_gedcom` NOT LIKE CONCAT('%1 ', ?, ' Y%')"
+			)->execute(array($WT_TREE->getTreeId(), $tag_array[$i], $tag_array[$i]))->fetchAll();
+			foreach ($rows as $row) {
+				$person			= Individual::getInstance($row->xref, $WT_TREE);
+				$death_date 	= $person->getDeathDate();
+				$event			= $person->getFirstFact($tag_array[$i]);
+				if ($event) {
+					$event_date = $event->getDate();
+					$age_diff	= Date::Compare($event_date, $death_date);
+					if ($event_date->minimumJulianDay() && $death_date->minimumJulianDay() && ($age_diff < 0)) {
+						$html .= '
+							<p>
+								<div class="first"><a href="'. $person->getHtmlUrl(). '" target="_blank">'. $person->getFullName(). '</a></div>
+								<div class="second"><span class="label">' . GedcomTag::getLabel($tag_array[$i]) . '</span>' . $event_date->Display() . '</div>
+								<div class="third"><span class="label">' . GedcomTag::getLabel('DEAT') . '</span>' . $death_date->Display() . '</div>
+							</p>';
+						$count ++;
+					}
+				}
+			}
+		}
+		return array('html' => $html, 'count' => $count);
+	}
+
 	private function missingTag($tag) {
 		global $WT_TREE;
 		$html = '';
@@ -371,6 +446,21 @@ class WoocSanityCheckModule extends AbstractModule implements ModuleConfigInterf
 		$count = 0;
 		$rows = Database::prepare(
 			"SELECT i_id AS xref, i_gedcom AS gedrec FROM `##individuals` WHERE `i_file`= ? AND (`i_gedcom` REGEXP '(\n1 " . $tag . ")((.*\n.*)*)(\n1 " . $tag . ")(.*)' OR `i_gedcom` REGEXP '(\n1 " . $tag . ")(.*)(\n1 " . $tag . ")(.*)')"
+		)->execute(array($WT_TREE->getTreeId()))->fetchAll();
+		foreach ($rows as $row) {
+			$person = Individual::getInstance($row->xref, $WT_TREE);
+			$html .= '<li><a href="'. $person->getHtmlUrl(). '" target="_blank">'. $person->getFullName(). '</a></li>';
+			$count ++;
+		}
+		return array('html' => $html, 'count' => $count);
+	}
+
+	private function identicalName() {
+		global $WT_TREE;
+		$html = '';
+		$count = 0;
+		$rows = Database::prepare(
+			"SELECT n_id AS xref, COUNT(*) as count  FROM `##name` WHERE `n_file`= ? AND `n_type`= 'NAME' GROUP BY `n_id`, `n_sort`, `n_full` HAVING COUNT(*) > 1 "
 		)->execute(array($WT_TREE->getTreeId()))->fetchAll();
 		foreach ($rows as $row) {
 			$person = Individual::getInstance($row->xref, $WT_TREE);
